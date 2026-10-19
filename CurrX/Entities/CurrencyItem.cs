@@ -1,4 +1,4 @@
-﻿namespace CurrX
+﻿namespace CurrX.Entities
 {
     internal class CurrencyItem
     {

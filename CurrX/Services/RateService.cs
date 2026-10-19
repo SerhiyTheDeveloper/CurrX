@@ -1,11 +1,12 @@
-﻿using System.Net.Http;
+﻿using CurrX.Entities;
+using System.Net.Http;
 using System.Text.Json;
 
-namespace CurrX
+namespace CurrX.Services
 {
     internal static class RateService
     {
-        private static readonly HttpClient Client = new HttpClient();
+        private static readonly HttpClient Client = new() { Timeout = TimeSpan.FromSeconds(15) };
 
         public static async Task<RateEntry> LoadRateAsync(string url)
         {
