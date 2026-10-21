@@ -1,4 +1,4 @@
-﻿namespace CurrX.Entities
+﻿namespace CurrX.Models
 {
     internal class RateEntry
     {

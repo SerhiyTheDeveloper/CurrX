@@ -309,16 +309,16 @@
                                                 Binding="{Binding Id}"
                                                 ElementStyle="{StaticResource CellText}"/>
                             <DataGridTextColumn Header="Код" Width="72"
-                                                Binding="{Binding CurrencyCode}"
+                                                Binding="{Binding Code}"
                                                 ElementStyle="{StaticResource CellText}"/>
                             <DataGridTextColumn Header="Назва" MinWidth="140" Width="Auto"
-                                                Binding="{Binding CurrencyName}"
+                                                Binding="{Binding Currency}"
                                                 ElementStyle="{StaticResource CellText}"/>
                             <DataGridTextColumn Header="Курс, ₴" Width="120"
                                                 Binding="{Binding Rate, StringFormat={}{0:F4}, ConverterCulture=uk-UA}"
                                                 ElementStyle="{StaticResource CellText}"/>
                             <DataGridTextColumn Header="Дата" Width="120"
-                                                Binding="{Binding DateText}"
+                                                Binding="{Binding ExchangeDate}"
                                                 ElementStyle="{StaticResource CellText}"/>
                             <DataGridTextColumn Header="Примітка" Width="1.5*" MinWidth="120"
                                                 Binding="{Binding Notes}"

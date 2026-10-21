@@ -1,4 +1,4 @@
-﻿using CurrX.Entities;
+﻿using CurrX.Models;
 using System.Net.Http;
 using System.Text.Json;
 

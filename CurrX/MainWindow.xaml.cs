@@ -1,5 +1,8 @@
-﻿using CurrX.Entities;
+﻿using CurrX.Infrastructure;
+using CurrX.Models;
 using CurrX.Services;
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Win32;
 using System.IO;
 using System.Net.Http;
@@ -16,11 +19,62 @@ namespace CurrX
     public partial class MainWindow : Window
     {
         private RateEntry? _currentRateEntry;
+        private readonly RateDatabaseService _databaseService;
+        private readonly string _databasePath;
+        private int? _selectedSavedId;
+        private readonly string _sourceUrl = "https://bank.gov.ua/NBUStatService/v1/statdirectory/exchangenew?json";
         public MainWindow()
         {
             InitializeComponent();
 
             SetupComponents();
+
+            _databasePath = AppPaths.GetDatabasePath();
+            _databaseService = new RateDatabaseService(_databasePath);
+        }
+
+        private async void Window_Loaded(object sender, RoutedEventArgs e)
+        {
+            SetStatus("Підготовка бази даних...");
+            try
+            {
+                await _databaseService.InitializeAsync();
+                await RefreshSavedItemsAsync();
+
+                SetBusy(false);
+                SetStatus($"База даних готова");
+            }
+            catch (SqliteException ex)
+            {
+                SetStatus("Не вдалося створити або відкрити базу даних.", isError: true);
+                System.Diagnostics.Debug.WriteLine(ex);
+            }
+            catch (Exception ex)
+            {
+                SetStatus("Сталася помилка під час підготовки бази даних.", isError: true);
+                System.Diagnostics.Debug.WriteLine(ex);
+            }
+        }
+
+        private async Task RefreshSavedItemsAsync()
+        {
+            List<SavedRateEntry> items = await _databaseService.GetAllAsync();
+
+            savedGrid.ItemsSource = null;
+            savedGrid.ItemsSource = items;
+            savedGrid.SelectedItem = null;
+
+            ClearSavedSelection();
+            countLabel.Text = $"{items.Count}";
+        }
+
+        private void ClearSavedSelection()
+        {
+            _selectedSavedId = null;
+            notesTextBox.Clear();
+            notesTextBox.IsEnabled = false;
+            updateButton.IsEnabled = false;
+            deleteButton.IsEnabled = false;
         }
 
         private void SetupComponents()
@@ -42,11 +96,18 @@ namespace CurrX
 
         private void SetBusy(bool isBusy)
         {
+            bool hasCurrentReading = _currentRateEntry is not null;
+            bool hasSelectedSavedItem = _selectedSavedId is not null;
             loadButton.IsEnabled = !isBusy;
             openButton.IsEnabled = !isBusy;
-            saveButton.IsEnabled = !isBusy && _currentRateEntry is not null;
+            saveButton.IsEnabled = !isBusy && hasCurrentReading;
+            saveToDatabaseButton.IsEnabled = !isBusy && hasCurrentReading;
+            refreshDatabaseButton.IsEnabled = !isBusy;
+            savedGrid.IsEnabled = !isBusy;
+            notesTextBox.IsEnabled = !isBusy && hasSelectedSavedItem;
+            updateButton.IsEnabled = !isBusy && hasSelectedSavedItem;
+            deleteButton.IsEnabled = !isBusy && hasSelectedSavedItem;
         }
-        private void Window_Loaded(object sender, RoutedEventArgs e) { }
 
         private async void loadButton_Click(object sender, RoutedEventArgs e)
         {
@@ -125,7 +186,7 @@ namespace CurrX
                 RateEntrySnapshot snapshot = new()
                 {
                     DataSource = "Національний банк України",
-                    SourceUrl = "https://bank.gov.ua/NBUStatService/v1/statdirectory/exchangenew?json",
+                    SourceUrl = _sourceUrl,
                     FormatVersion = "1.0",
                     SavedAt = DateTimeOffset.Now,
                     RateEntry = _currentRateEntry
@@ -214,10 +275,167 @@ namespace CurrX
                 SetBusy(false);
             }
         }
-        private void saveToDatabaseButton_Click(object sender, RoutedEventArgs e) { }
-        private void refreshDatabaseButton_Click(object sender, RoutedEventArgs e) { }
-        private void savedGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) { }
-        private void updateButton_Click(object sender, RoutedEventArgs e) { }
-        private void deleteButton_Click(object sender, RoutedEventArgs e) { }
+
+        private async void saveToDatabaseButton_Click(object sender, RoutedEventArgs e) 
+        {
+            if (_currentRateEntry is null)
+            {
+                SetStatus("Спочатку завантажте або відкрийте дані.");
+                return;
+            }
+            if (await _databaseService.ExistsAsync(_currentRateEntry.Code, _currentRateEntry.ExchangeDate))
+            {
+                SetStatus("Такий запис уже збережено.", isError: true);
+                return;
+            }
+            SavedRateEntry entity = new()
+            {
+                Currency = _currentRateEntry.Currency,
+                Rate = _currentRateEntry.Rate,
+                Code = _currentRateEntry.Code,
+                ExchangeDate = _currentRateEntry.ExchangeDate,
+                SourceUrl = _sourceUrl,
+                SavedAtUtc = DateTime.UtcNow,
+                Notes = "",
+            };
+            SetBusy(true);
+            SetStatus("Збереження в базі даних...");
+            try
+            {
+                int newId = await _databaseService.AddAsync(entity);
+                await RefreshSavedItemsAsync();
+                SetStatus($"Запис збережено в базі. Id = {newId}.");
+            }
+            catch (DbUpdateException ex)
+            {
+                SetStatus("Не вдалося зберегти запис у базі даних.", isError: true);
+                System.Diagnostics.Debug.WriteLine(ex);
+            }
+            finally
+            {
+                SetBusy(false);
+            }
+        }
+
+        private async void refreshDatabaseButton_Click(object sender, RoutedEventArgs e)
+        {
+            SetBusy(true);
+            SetStatus("Оновлення списку...");
+            try
+            {
+                await RefreshSavedItemsAsync();
+                SetStatus("Список оновлено.");
+            }
+            catch (SqliteException ex)
+            {
+                SetStatus("Не вдалося прочитати базу даних.", isError: true);
+                System.Diagnostics.Debug.WriteLine(ex);
+            }
+            finally
+            {
+                SetBusy(false);
+            }
+        }
+
+        private void savedGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) 
+        {
+            if (savedGrid.SelectedItem is not SavedRateEntry item)
+            {
+                ClearSavedSelection();
+                return;
+            }
+            _selectedSavedId = item.Id;
+            notesTextBox.Text = item.Notes;
+            notesTextBox.IsEnabled = true;
+            updateButton.IsEnabled = true;
+            deleteButton.IsEnabled = true;
+            statusLabel.Text =
+            $"Вибрано запис Id = {item.Id}, валюта: {item.Currency}.";
+        }
+
+        private async void updateButton_Click(object sender, RoutedEventArgs e) 
+        {
+            if (_selectedSavedId is null)
+            {
+                SetStatus("Оберіть запис у таблиці.", isError: true);
+                return;
+            }
+            string notes = notesTextBox.Text.Trim();
+            if (notes.Length > 500)
+            {
+                SetStatus("Примітка не може перевищувати 500 символів.", isError: true);
+                return;
+            }
+            int id = _selectedSavedId.Value;
+
+            SetBusy(true);
+            SetStatus("Збереження змін...");
+            try
+            {
+                bool updated = await _databaseService.UpdateAsync(id, notes);
+                if (!updated)
+                {
+                    SetStatus("Запис уже не існує.", isError: true);
+                    await RefreshSavedItemsAsync();
+                    return;
+                }
+                await RefreshSavedItemsAsync();
+                SetStatus($"Запис Id = {id} оновлено.");
+            }
+            catch (DbUpdateException ex)
+            {
+                SetStatus("Не вдалося оновити запис.", isError: true);
+                System.Diagnostics.Debug.WriteLine(ex);
+            }
+            finally
+            {
+                SetBusy(false);
+            }
+        }
+
+        private async void deleteButton_Click(object sender, RoutedEventArgs e) 
+        {
+            if (_selectedSavedId is null)
+            {
+                SetStatus("Оберіть запис для видалення.", isError: true);
+                return;
+            }
+            int id = _selectedSavedId.Value;
+            MessageBoxResult answer = MessageBox.Show(
+                $"Видалити запис Id = {id}?",
+                "Підтвердження",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+
+            if (answer != MessageBoxResult.Yes)
+            {
+                SetStatus("Видалення скасовано.");
+                return;
+            }
+
+            SetBusy(true);
+            SetStatus("Видалення запису...");
+            try
+            {
+                bool deleted = await _databaseService.DeleteAsync(id);
+                if (!deleted)
+                {
+                    SetStatus("Запис уже не існує.", isError: true);
+                    await RefreshSavedItemsAsync();
+                    return;
+                }
+                await RefreshSavedItemsAsync();
+                SetStatus($"Запис Id = {id} видалено.");
+            }
+            catch (DbUpdateException ex)
+            {
+                SetStatus("Не вдалося видалити запис.", isError: true);
+                System.Diagnostics.Debug.WriteLine(ex);
+            }
+            finally
+            {
+                SetBusy(false);
+            }
+        }
     }
 }
